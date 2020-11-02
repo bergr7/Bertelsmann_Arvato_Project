@@ -38,21 +38,14 @@ def clean_df(df, drop_subset):
     # drop not useful cols
     df = df.drop(drop_subset, axis=1)
 
-    # test_1_1 = list(df.dtypes)
-
     # map X or XX values in CAMEO_ variables to 0's as string
     for col in ['CAMEO_DEU_2015', 'CAMEO_DEUG_2015', 'CAMEO_INTL_2015']:
-        df.loc[df[col] == 'X', col] = str(0)
-
-    # test_1_2 = list(df.dtypes)
+        df.loc[df[col].isin(['X', 'XX']), col] = str(0)
 
     # transform CAMEO_DEUG_2015 and CAMEO_INTL_2015 data type into integer
     df.astype({'CAMEO_DEUG_2015': 'int64', 'CAMEO_INTL_2015': 'int64'}, errors='ignore')
 
-    # test_1_3 = list(df.dtypes)
-
     df_cleaned = df
-    # test_2 = list(df_cleaned.dtypes)
 
     return df_cleaned
 
