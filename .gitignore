@@ -140,3 +140,6 @@ dmypy.json
 # terms and conditions folder
 /terms_and_conditions
 
+# examples
+/examples
+
