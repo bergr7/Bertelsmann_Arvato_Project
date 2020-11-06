@@ -72,7 +72,6 @@ def map_unknowns(attributes, df):
         unknowns_list = attributes['Unknown'].loc[attribute].strip('][').split(', ')[0].split(',')
         # if there are unknown values, map them to NaN's
         if unknowns_list != ['']:
-            #for i in range(len(unknowns_list)):
             df.loc[df[attribute].isin(unknowns_list), attribute] = np.nan
 
     # transform columns to original dtypes
