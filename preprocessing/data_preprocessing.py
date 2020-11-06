@@ -50,6 +50,39 @@ def clean_df(df, drop_subset):
     return df_cleaned
 
 
+def map_unknowns(attributes, df):
+    """It maps unknown values identified during data exploration to NaN's.
+    Parameters
+    __________
+    :param attributes: Attributes pandas DataFrame.
+    :param df: df: AZDIAS or CUSTOMERS Pandas DataFrame
+    __________
+    :return: mapped_df: AZDIAS or CUSTOMERS Pandas DataFrame with unknown values mapped to NaN's
+    """
+    # create a dict with original dtypes for each column
+    original_dtypes = dict()
+    for col in df.columns:
+        original_dtypes[col] = str(df[col].dtype)
+
+    # convert all columns to object type
+    df.astype(dtype='str')
+    # loop through all attributes
+    for attribute in attributes.index:
+        # for each attribute, retrieve a list with unknown values
+        unknowns_list = attributes['Unknown'].loc[attribute].strip('][').split(', ')[0].split(',')
+        # if there are unknown values, map them to NaN's
+        if unknowns_list != ['']:
+            #for i in range(len(unknowns_list)):
+            df.loc[df[attribute].isin(unknowns_list), attribute] = np.nan
+
+    # transform columns to original dtypes
+    df.astype(original_dtypes, errors='ignore')
+
+    mapped_df = df
+
+    return mapped_df
+
+
 def impute_mv(df, strategy):
     """It performs imputation of missing values using skelarn SimpleImputer.
     Parameters
