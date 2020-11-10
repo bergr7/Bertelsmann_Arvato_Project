@@ -26,30 +26,6 @@ def load_data(path_file, dtype, sep):
     return pd.read_csv(path_file, dtype=dtype, sep=sep)
 
 
-def clean_df(df, drop_subset):
-    """It performs data cleaning on AZDIAS or CUSTOMERS dataframe.
-    Parameters
-    __________
-    :param df: AZDIAS or CUSTOMERS Pandas DataFrame
-    :param drop_subset: list of strings. Columns to be dropped from AZDIAS or CUSTOMERS df
-    __________
-    :return: Cleaned AZDIAS or CUSTOMERS Pandas DataFrame
-    """
-    # drop not useful cols
-    df = df.drop(drop_subset, axis=1)
-
-    # map X or XX values in CAMEO_ variables to 0's as string
-    for col in ['CAMEO_DEU_2015', 'CAMEO_DEUG_2015', 'CAMEO_INTL_2015']:
-        df.loc[df[col].isin(['X', 'XX']), col] = str(0)
-
-    # transform CAMEO_DEUG_2015 and CAMEO_INTL_2015 data type into integer
-    df.astype({'CAMEO_DEUG_2015': 'int64', 'CAMEO_INTL_2015': 'int64'}, errors='ignore')
-
-    df_cleaned = df
-
-    return df_cleaned
-
-
 def map_unknowns(attributes, df):
     """It maps unknown values identified during data exploration to NaN's.
     Parameters
@@ -72,7 +48,10 @@ def map_unknowns(attributes, df):
         unknowns_list = attributes['Unknown'].loc[attribute].strip('][').split(', ')[0].split(',')
         # if there are unknown values, map them to NaN's
         if unknowns_list != ['']:
-            df.loc[df[attribute].isin(unknowns_list), attribute] = np.nan
+            if attribute in ['CAMEO_DEUG_2015', 'CAMEO_DEU_2015', 'CAMEO_INTL_2015']:
+                df.loc[df[attribute].isin(['X','XX', '-1']), attribute] = np.nan
+            else:
+                df.loc[df[attribute].isin(unknowns_list), attribute] = np.nan
 
     # transform columns to original dtypes
     df.astype(original_dtypes, errors='ignore')
@@ -80,6 +59,90 @@ def map_unknowns(attributes, df):
     mapped_df = df
 
     return mapped_df
+
+
+def clean_df(azdias_df, cust_df, azdias=True):
+    """It performs data cleaning on AZDIAS or CUSTOMERS dataframe.
+    Parameters
+    __________
+    :param azdias_df: AZDIAS Pandas DataFrame
+    :param cust_df: CUSTOMERS Pandas DataFrame
+    :param azdias: Boolean. If True, it performs cleaning on AZDIAS df. If False, it performs cleaning on CUSTOMERS df.
+    __________
+    :return: Cleaned AZDIAS or CUSTOMERS Pandas DataFrame
+    """
+    # columns to be dropped due to missing values proportion
+    azdias_toDrop = check_mv_prop(azdias_df, 0.6, toDrop=True)
+    customers_toDrop = check_mv_prop(cust_df, 0.6, toDrop=True)
+    azdias_toDrop.extend(customers_toDrop)
+    toDrop = list(set(azdias_toDrop))   # find unique values
+
+    # check which dataframe is going to be cleaned
+    if azdias:
+        # drop cols not useful for analysis or with lots of mv
+        toDrop.extend(['Unnamed: 0', 'LNR', 'D19_LETZTER_KAUF_BRANCHE', 'EINGEFUEGT_AM', 'OST_WEST_KZ',
+                       'KBA13_ANTG4', 'VERDICHTUNGSRAUM'])
+        azdias_df = azdias_df.drop(toDrop, axis=1)
+
+        # drop individuals with more than 150 missed values
+        rows_toDrop = list(azdias_df.isnull().sum(axis=1).loc[azdias_df.isnull().sum(axis=1) > 150].index)
+        azdias_df = azdias_df.drop(rows_toDrop, axis=0)
+
+        # remove outliers in 'ANZ_HAUSHALTE_AKTIV' and 'ANZ_PERSONEN'
+        azdias_df = azdias_df.loc[azdias_df['ANZ_HAUSHALTE_AKTIV'] < 10, :]  # based on 1.5*IQR rule and attributes information
+        azdias_df = azdias_df.loc[azdias_df['ANZ_PERSONEN'] < 3, :]  # based on 1.5*IQR rule and attributes information
+
+        df_cleaned = azdias_df
+
+        return df_cleaned
+
+    else:
+        # drop {'CUSTOMER_GROUP', 'ONLINE_PURCHASE', 'PRODUCT_GROUP'}
+        cust_df = cust_df.drop(['CUSTOMER_GROUP', 'ONLINE_PURCHASE', 'PRODUCT_GROUP'], axis=1)
+
+        # drop cols not useful for analysis or with lots of mv
+        toDrop.extend(['Unnamed: 0', 'LNR', 'D19_LETZTER_KAUF_BRANCHE', 'EINGEFUEGT_AM', 'OST_WEST_KZ'])
+        cust_df = cust_df.drop(toDrop, axis=1)
+
+        # drop individuals with more than 150 missed values
+        rows_toDrop = list(cust_df.isnull().sum(axis=1).loc[cust_df.isnull().sum(axis=1) > 150].index)
+        cust_df = cust_df.drop(rows_toDrop, axis=0)
+
+        # remove outliers in 'ANZ_HAUSHALTE_AKTIV' and 'ANZ_PERSONEN'
+        cust_df = cust_df.loc[cust_df['ANZ_HAUSHALTE_AKTIV'] < 10, :]  # based on 1.5*IQR rule and attributes information
+        cust_df = cust_df.loc[cust_df['ANZ_PERSONEN'] < 3, :]  # based on 1.5*IQR rule and attributes information
+
+        df_cleaned = cust_df
+
+        return df_cleaned
+
+
+def check_mv_prop(df, p, toDrop=True):
+    """It checks the proportion of missing values for each col and prints which cols have more than p% missing values.
+    INPUT:
+    df: Pandas dataframe.
+    p: float. Missing values proportion threshold.
+    toDrop: Boolean. If true, condition is propotion of mv > p. condition is propotion of mv < p otherwise.
+
+    OUTPUT:
+    toDrop_lst: list of columns be dropped if toDrop = True.
+    toImpute_lst: list of columns to be imputed if toImpute_lst = True.
+    """
+    mvs = df.isnull().sum()
+    if toDrop:
+        toDrop_lst = []
+        for col in df.columns:
+            if mvs.loc[col] / df.shape[0] > p:
+                print("{:.2f}% of {} are missing values".format((df.isnull().sum().loc[col] / df.shape[0]) * 100, col))
+                toDrop_lst.append(col)
+        return toDrop_lst
+    else:
+        toImpute_lst = []
+        for col in df.columns:
+            if mvs.loc[col] / df.shape[0] <= p:
+                print("{:.2f}% of {} are missing values".format((df.isnull().sum().loc[col] / df.shape[0]) * 100, col))
+                toImpute_lst.append(col)
+        return toImpute_lst
 
 
 def impute_mv(df, strategy):
@@ -170,20 +233,35 @@ def save_pickle_df(df, file_path, file_name):
 
 
 def main():
+    # load in attributes.csv
+    print("Loading attributes.csv...")
+    attributes = pd.read_csv('../data/attributes.csv', sep=';', names=['Type', 'Unknown'])
+
     # AZDIAS DATA PREPROCESSING FOR PCA ANALYSIS
     # load in AZDIAS data
     print("Loading AZDIAS data...")
-    azdias_df = load_data('../data/Udacity_AZDIAS_052018.csv', dtype={'CAMEO_DEUG_2015': 'str', 'CAMEO_INTL_2015': 'str'}, sep=',')
+    raw_azdias_df = load_data('../data/Udacity_AZDIAS_052018.csv',
+                          dtype={'CAMEO_DEUG_2015': 'str', 'CAMEO_INTL_2015': 'str'}, sep=','
+                          )
 
-    # test say 1000 rows
-    # azdias_df = azdias_df[:5000]
+    # load in CUSTOMERS data
+    print("Loading CUSTOMERS data...")
+    raw_cust_df = load_data('../data/Udacity_CUSTOMERS_052018.csv',
+                        dtype={'CAMEO_DEUG_2015': 'str', 'CAMEO_INTL_2015': 'str'}, sep=','
+                        )
 
-    # Cleaning
-    print("Cleaning data...")
-    azdias_df = clean_df(azdias_df,
-                         ['Unnamed: 0', 'ALTER_KIND1', 'ALTER_KIND3', 'ALTER_KIND4', 'EXTSEL992', 'KK_KUNDENTYP',
-                          'D19_LETZTER_KAUF_BRANCHE', 'EINGEFUEGT_AM', 'OST_WEST_KZ']
-                         )
+    # test say 20000 rows
+    # raw_azdias_df = raw_azdias_df[:20000]
+    # test say 20000 rows
+    # raw_cust_df = raw_cust_df[:20000]
+
+    # map unknown values to missing values
+    print("Mapping unknown values to NaN's...")
+    azdias_df = map_unknowns(attributes=attributes, df=raw_azdias_df)
+
+    # cleaning
+    print("Cleaning AZDIAS data...")
+    azdias_df = clean_df(azdias_df, raw_cust_df, azdias=True)
 
     # impute missing values with mode
     print("Imputing missing values...")
@@ -194,7 +272,6 @@ def main():
     preprocessed_azdias_df = label_encode_cameo(azdias_df)
 
     assert preprocessed_azdias_df.isnull().any().mean() == 0.0, "There are still missing values in the data."
-    assert preprocessed_azdias_df.shape == (azdias_df.shape[0], 358)
 
     print("AZDIAS data is preprocessed and ready for PCA analysis")
 
@@ -204,21 +281,14 @@ def main():
     print("Use pd.read_pickle to read it.")
 
     # CUSTOMERS DATA PREPROCESSING FOR PCA ANALYSIS
-    # load in CUSTOMERS data
-    print("Loading CUSTOMERS data...")
-    cust_df = load_data('../data/Udacity_CUSTOMERS_052018.csv',
-                        dtype={'CAMEO_DEUG_2015': 'str', 'CAMEO_INTL_2015': 'str'}, sep=','
-                        )
 
-    # test say 1000 rows
-    # cust_df = cust_df[:1000]
+    # map unknown values to missing values
+    print("Mapping unknown values to NaN's...")
+    cust_df = map_unknowns(attributes=attributes, df=raw_cust_df)
 
     # Cleaning
     print("Cleaning data...")
-    cust_df = clean_df(cust_df,
-                       ['Unnamed: 0', 'ALTER_KIND1', 'ALTER_KIND3', 'ALTER_KIND4', 'KK_KUNDENTYP',
-                        'D19_LETZTER_KAUF_BRANCHE', 'EINGEFUEGT_AM', 'OST_WEST_KZ']
-                       )
+    cust_df = clean_df(raw_azdias_df, cust_df, azdias=False)
 
     # impute missing values with mode
     print("Imputing missing values...")
@@ -226,14 +296,9 @@ def main():
 
     # encode 'CAMEO_DEU_2015'
     print("Encoding 'CAMEO_DEU_2015' variable...")
-    cust_df = label_encode_cameo(cust_df)
-
-    # encode 'CUSTOMER_GROUP' and 'PRODUCT_GROUP'
-    print("Encoding 'CUSTOMER_GROUP' and 'PRODUCT_GROUP' variables...")
-    preprocessed_cust_df = label_encode_groups(cust_df)
+    preprocessed_cust_df = label_encode_cameo(cust_df)
 
     assert preprocessed_cust_df.isnull().any().mean() == 0.0, "There are still missing values in the data."
-    assert preprocessed_cust_df.shape == (cust_df.shape[0], 362)
 
     print("CUSTOMERS data is preprocessed and ready for PCA analysis.")
 
